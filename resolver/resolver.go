@@ -109,7 +109,7 @@ type Address struct {
 	ServerName string
 
 	// Attributes contains arbitrary data about this address intended for
-	// consumption by the load balancing policy.
+	// consumption by the load balancing policy. 可以在这个上面做一些文章
 	Attributes *attributes.Attributes
 
 	// Type is the type of this address.

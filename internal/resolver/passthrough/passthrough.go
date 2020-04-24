@@ -45,9 +45,10 @@ type passthroughResolver struct {
 }
 
 func (r *passthroughResolver) start() {
+	//直接就一个地址，没有服务发现的功能
 	r.cc.UpdateState(resolver.State{Addresses: []resolver.Address{{Addr: r.target.Endpoint}}})
 }
-
+//ResolveNow是空的，
 func (*passthroughResolver) ResolveNow(o resolver.ResolveNowOptions) {}
 
 func (*passthroughResolver) Close() {}

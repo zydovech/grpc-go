@@ -57,7 +57,7 @@ type StreamDesc struct {
 
 	// At least one of these is true.
 	ServerStreams bool
-	ClientStreams bool
+	ClientStreams bool //是否是流式的
 }
 
 // Stream defines the common interface a client or server stream has to satisfy.
@@ -167,7 +167,7 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 	c := defaultCallInfo()
 	// Provide an opportunity for the first RPC to see the first service config
 	// provided by the resolver.
-	if err := cc.waitForResolvedAddrs(ctx); err != nil {
+	if err := cc.waitForResolvedAddrs(ctx); err != nil { //等待第一次resolve解析，因为只有经过resolve之后，该链接采用正常的地址，对应resolver里的ClientConn的UpdateState
 		return nil, err
 	}
 	mc := cc.GetMethodConfig(method)
@@ -285,7 +285,7 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 		cs.finish(err)
 		return nil, err
 	}
-
+	//创建新的stream
 	op := func(a *csAttempt) error { return a.newStream() }
 	if err := cs.withRetry(op, func() { cs.bufferForRetryLocked(0, op) }); err != nil {
 		cs.finish(err)
@@ -348,6 +348,7 @@ func (cs *clientStream) newAttemptLocked(sh stats.Handler, trInfo *traceInfo) (r
 	if err := cs.ctx.Err(); err != nil {
 		return toRPCErr(err)
 	}
+	//获取一个连接
 	t, done, err := cs.cc.getTransport(cs.ctx, cs.callInfo.failFast, cs.callHdr.Method)
 	if err != nil {
 		return err
@@ -381,9 +382,9 @@ type clientStream struct {
 	cc       *ClientConn
 	desc     *StreamDesc
 
-	codec baseCodec
+	codec baseCodec //编解码
 	cp    Compressor
-	comp  encoding.Compressor
+	comp  encoding.Compressor //压缩
 
 	cancel context.CancelFunc // cancels all attempts
 
@@ -436,7 +437,7 @@ type csAttempt struct {
 	finished  bool
 	dc        Decompressor
 	decomp    encoding.Compressor
-	decompSet bool
+	decompSet bool //判断解压缩的是否配置了，第一次recv的时候，是没有配置的
 
 	mu sync.Mutex // guards trInfo.tr
 	// trInfo may be nil (if EnableTracing is false).
@@ -591,7 +592,7 @@ func (cs *clientStream) withRetry(op func(a *csAttempt) error, onSuccess func())
 		}
 		a := cs.attempt
 		cs.mu.Unlock()
-		err := op(a)
+		err := op(a) //走这里
 		cs.mu.Lock()
 		if a != cs.attempt {
 			// We started another attempt already.
@@ -691,7 +692,7 @@ func (cs *clientStream) SendMsg(m interface{}) (err error) {
 	if cs.sentLast {
 		return status.Errorf(codes.Internal, "SendMsg called after CloseSend")
 	}
-	if !cs.desc.ClientStreams {
+	if !cs.desc.ClientStreams {//要求是客户端的
 		cs.sentLast = true
 	}
 
@@ -842,6 +843,7 @@ func (a *csAttempt) sendMsg(m interface{}, hdr, payld, data []byte) error {
 		}
 		a.mu.Unlock()
 	}
+	//交给transport.ClientTransport进行write ，就是http2Client进行操作
 	if err := a.t.Write(a.s, hdr, payld, &transport.Options{Last: !cs.desc.ClientStreams}); err != nil {
 		if !cs.desc.ClientStreams {
 			// For non-client-streaming RPCs, we return nil instead of EOF on error
@@ -865,18 +867,20 @@ func (a *csAttempt) recvMsg(m interface{}, payInfo *payloadInfo) (err error) {
 	if a.statsHandler != nil && payInfo == nil {
 		payInfo = &payloadInfo{}
 	}
-
+	//第一次这个地方是没有配置的
 	if !a.decompSet {
 		// Block until we receive headers containing received message encoding.
+		//阻塞，直到我们收到了对方的headers frame。。
 		if ct := a.s.RecvCompress(); ct != "" && ct != encoding.Identity {
 			if a.dc == nil || a.dc.Type() != ct {
 				// No configured decompressor, or it does not match the incoming
 				// message encoding; attempt to find a registered compressor that does.
+				//设置新的解压缩的
 				a.dc = nil
 				a.decomp = encoding.GetCompressor(ct)
 			}
 		} else {
-			// No compression is used; disable our decompressor.
+			// No compression is used; disable our decompressor. 没有设置
 			a.dc = nil
 		}
 		// Only initialize this state once per stream.
@@ -1516,10 +1520,12 @@ func prepareMsg(m interface{}, codec baseCodec, cp Compressor, comp encoding.Com
 	}
 	// The input interface is not a prepared msg.
 	// Marshal and Compress the data at this point
+	//进行序列化
 	data, err = encode(codec, m)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	//进行压缩
 	compData, err := compress(data, cp, comp)
 	if err != nil {
 		return nil, nil, nil, err

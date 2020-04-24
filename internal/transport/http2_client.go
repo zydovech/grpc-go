@@ -68,6 +68,7 @@ type http2Client struct {
 	framer *framer
 	// controlBuf delivers all the control related tasks (e.g., window
 	// updates, reset streams, and various settings) to the controller.
+	//stream写数据到这个地方
 	controlBuf *controlBuffer
 	fc         *trInFlow
 	// The scheme used: https if TLS is on, http otherwise.
@@ -93,15 +94,16 @@ type http2Client struct {
 	// connection was established.
 	onPrefaceReceipt func()
 
-	maxConcurrentStreams  uint32
-	streamQuota           int64
-	streamsQuotaAvailable chan struct{}
-	waitingStreams        uint32
+
+	maxConcurrentStreams  uint32 //记录最大的并发stream的大小
+	streamQuota           int64  //用于实时记录当前还可以建立多少个stream
+	streamsQuotaAvailable chan struct{} //如果streamQuota小于0，则无法新建stream, 就会阻塞，当可用的时候，会写消息到该chan
+	waitingStreams        uint32 //记录等待的数量
 	nextID                uint32
 
 	mu            sync.Mutex // guard the following variables
 	state         transportState
-	activeStreams map[uint32]*Stream
+	activeStreams map[uint32]*Stream //记录当前活跃的stream
 	// prevGoAway ID records the Last-Stream-ID in the previous GOAway frame.
 	prevGoAwayID uint32
 	// goAwayReason records the http2.ErrCode and debug data received with the
@@ -290,9 +292,11 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr TargetInfo, opts Conne
 	// Start the reader goroutine for incoming message. Each transport has
 	// a dedicated goroutine which reads HTTP2 frame from network. Then it
 	// dispatches the frame to the corresponding stream entity.
+	//开启一个协程去不断的读取数据
 	go t.reader()
 
 	// Send connection preface to server.
+
 	n, err := t.conn.Write(clientPreface)
 	if err != nil {
 		t.Close()
@@ -332,8 +336,10 @@ func newHTTP2Client(connectCtx, ctx context.Context, addr TargetInfo, opts Conne
 	if err := t.framer.writer.Flush(); err != nil {
 		return nil, err
 	}
+	//开启一个协程来负责 底层的写
 	go func() {
 		t.loopy = newLoopyWriter(clientSide, t.framer, t.controlBuf, t.bdpEst)
+		//run，启动
 		err := t.loopy.run()
 		if err != nil {
 			errorf("transport: loopyWriter.run returning. Err: %v", err)
@@ -359,7 +365,9 @@ func (t *http2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 		headerChan:     make(chan struct{}),
 		contentSubtype: callHdr.ContentSubtype,
 	}
+	//做限流用的？
 	s.wq = newWriteQuota(defaultWriteQuota, s.done)
+	//读数据之前调用，用于调整flow control
 	s.requestRead = func(n int) {
 		t.adjustWindow(s, uint32(n))
 	}
@@ -367,6 +375,7 @@ func (t *http2Client) newStream(ctx context.Context, callHdr *CallHdr) *Stream {
 	// That means, s.ctx should be read-only. And s.ctx is done iff ctx is done.
 	// So we use the original context here instead of creating a copy.
 	s.ctx = ctx
+	//设置底层的读数据源
 	s.trReader = &transportReader{
 		reader: &recvBufferReader{
 			ctx:     s.ctx,
@@ -410,6 +419,7 @@ func (t *http2Client) createHeaderFields(ctx context.Context, callHdr *CallHdr) 
 	// Make the slice of certain predictable size to reduce allocations made by append.
 	hfLen := 7 // :method, :scheme, :path, :authority, content-type, user-agent, te
 	hfLen += len(authData) + len(callAuthData)
+
 	headerFields := make([]hpack.HeaderField, 0, hfLen)
 	headerFields = append(headerFields, hpack.HeaderField{Name: ":method", Value: "POST"})
 	headerFields = append(headerFields, hpack.HeaderField{Name: ":scheme", Value: t.scheme})
@@ -426,10 +436,10 @@ func (t *http2Client) createHeaderFields(ctx context.Context, callHdr *CallHdr) 
 		headerFields = append(headerFields, hpack.HeaderField{Name: "grpc-encoding", Value: callHdr.SendCompress})
 		headerFields = append(headerFields, hpack.HeaderField{Name: "grpc-accept-encoding", Value: callHdr.SendCompress})
 	}
-	if dl, ok := ctx.Deadline(); ok {
+	if dl, ok := ctx.Deadline(); ok {//超时时间的控制
 		// Send out timeout regardless its value. The server can detect timeout context by itself.
 		// TODO(mmukhi): Perhaps this field should be updated when actually writing out to the wire.
-		timeout := time.Until(dl)
+		timeout := time.Until(dl)//算出还有多少的超时时间,可以看得出来超时时间是通过grpc-timeout 进行传递的
 		headerFields = append(headerFields, hpack.HeaderField{Name: "grpc-timeout", Value: encodeTimeout(timeout)})
 	}
 	for k, v := range authData {
@@ -445,7 +455,7 @@ func (t *http2Client) createHeaderFields(ctx context.Context, callHdr *CallHdr) 
 		headerFields = append(headerFields, hpack.HeaderField{Name: "grpc-trace-bin", Value: encodeBinHeader(b)})
 	}
 
-	if md, added, ok := metadata.FromOutgoingContextRaw(ctx); ok {
+	if md, added, ok := metadata.FromOutgoingContextRaw(ctx); ok {//通过NewOutgoingContext 携带在ctx里面的数据，可以把一些需要带给下游的数据，放在这个里面
 		var k string
 		for k, vv := range md {
 			// HTTP doesn't allow you to set pseudoheaders after non pseudoheaders were set.
@@ -545,9 +555,10 @@ func (t *http2Client) getCallAuthData(ctx context.Context, audience string, call
 }
 
 // NewStream creates a stream and registers it into the transport as "active"
-// streams.
+// streams. 新建一个stream
 func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Stream, err error) {
 	ctx = peer.NewContext(ctx, t.getPeer())
+	//创建headersFields 。就是HEADER FRAME
 	headerFields, err := t.createHeaderFields(ctx, callHdr)
 	if err != nil {
 		return nil, err
@@ -570,6 +581,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 	hdr := &headerFrame{
 		hf:        headerFields,
 		endStream: false,
+		//initStream会在loopyWrite里面的headerHandler进行调用
 		initStream: func(id uint32) error {
 			t.mu.Lock()
 			if state := t.state; state != reachable {
@@ -599,6 +611,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 	}
 	firstTry := true
 	var ch chan struct{}
+	//检查streamQuota的值
 	checkForStreamQuota := func(it interface{}) bool {
 		if t.streamQuota <= 0 { // Can go negative if server decreases it.
 			if firstTry {
@@ -612,6 +625,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		}
 		t.streamQuota--
 		h := it.(*headerFrame)
+		//客户端的stream id都是奇数
 		h.streamID = t.nextID
 		t.nextID += 2
 		s.id = h.streamID
@@ -660,7 +674,7 @@ func (t *http2Client) NewStream(ctx context.Context, callHdr *CallHdr) (_ *Strea
 		}
 		firstTry = false
 		select {
-		case <-ch:
+		case <-ch: //有数据了，则有可用的streamQuota了，继续
 		case <-s.ctx.Done():
 			return nil, ContextErr(s.ctx.Err())
 		case <-t.goAway:
@@ -692,15 +706,17 @@ func (t *http2Client) CloseStream(s *Stream, err error) {
 		rstCode http2.ErrCode
 	)
 	if err != nil {
+		//err不为空的话，则说明有错误发生，则需要发送rst到对方，
 		rst = true
 		rstCode = http2.ErrCodeCancel
 	}
 	t.closeStream(s, err, rst, rstCode, status.Convert(err), nil, false)
 }
-
+//用于关闭一个stream
 func (t *http2Client) closeStream(s *Stream, err error, rst bool, rstCode http2.ErrCode, st *status.Status, mdata map[string][]string, eosReceived bool) {
 	// Set stream status to done.
 	if s.swapState(streamDone) == streamDone {
+		//同时调用了closeStream。。等第一个处理完成
 		// If it was already done, return.  If multiple closeStream calls
 		// happen simultaneously, wait for the first to finish.
 		<-s.done
@@ -713,20 +729,24 @@ func (t *http2Client) closeStream(s *Stream, err error, rst bool, rstCode http2.
 	if len(mdata) > 0 {
 		s.trailer = mdata
 	}
+
 	if err != nil {
-		// This will unblock reads eventually.
+		// This will unblock reads eventually. 写了之后，就能读取到
 		s.write(recvMsg{err: err})
 	}
 	// If headerChan isn't closed, then close it.
+
 	if atomic.CompareAndSwapUint32(&s.headerChanClosed, 0, 1) {
+		//如果headerChan还没有关闭，则进行关闭。读操作不用在block在该stream的读上面了
 		s.noHeaders = true
 		close(s.headerChan)
 	}
+
 	cleanup := &cleanupStream{
 		streamID: s.id,
 		onWrite: func() {
 			t.mu.Lock()
-			if t.activeStreams != nil {
+			if t.activeStreams != nil {//从active里面删除
 				delete(t.activeStreams, s.id)
 			}
 			t.mu.Unlock()
@@ -742,8 +762,10 @@ func (t *http2Client) closeStream(s *Stream, err error, rst bool, rstCode http2.
 		rstCode: rstCode,
 	}
 	addBackStreamQuota := func(interface{}) bool {
+		//因为关闭了该stream，所以增加streamQuota的值
 		t.streamQuota++
-		if t.streamQuota > 0 && t.waitingStreams > 0 {
+		if t.streamQuota > 0 && t.waitingStreams > 0 { //有人在等待streamQuota可用
+			//如果
 			select {
 			case t.streamsQuotaAvailable <- struct{}{}:
 			default:
@@ -827,8 +849,8 @@ func (t *http2Client) GracefulClose() {
 // should proceed only if Write returns nil.
 func (t *http2Client) Write(s *Stream, hdr []byte, data []byte, opts *Options) error {
 	if opts.Last {
-		// If it's the last message, update stream state.
-		if !s.compareAndSwapState(streamActive, streamWriteDone) {
+		// If it's the last message, update stream state. 如果是最后一次写了，就把状态修改为streamWriteDone
+		if !s.compareAndSwapState(streamActive, streamWriteDone) { //对端可能已经把stream给rst了，这个时候，就会出错
 			return errStreamDone
 		}
 	} else if s.getState() != streamActive {
@@ -840,7 +862,8 @@ func (t *http2Client) Write(s *Stream, hdr []byte, data []byte, opts *Options) e
 	}
 	if hdr != nil || data != nil { // If it's not an empty data frame.
 		// Add some data to grpc message header so that we can equally
-		// distribute bytes across frames.
+		// distribute bytes across frames.  向grpc消息头添加一些数据，以便我们可以在帧之间平均分配字节
+		//这里为啥要这么做?
 		emptyLen := http2MaxFrameLen - len(hdr)
 		if emptyLen > len(data) {
 			emptyLen = len(data)
@@ -849,10 +872,12 @@ func (t *http2Client) Write(s *Stream, hdr []byte, data []byte, opts *Options) e
 		data = data[emptyLen:]
 		df.h, df.d = hdr, data
 		// TODO(mmukhi): The above logic in this if can be moved to loopyWriter's data handler.
+		//这里可能会等待，有足够的
 		if err := s.wq.get(int32(len(hdr) + len(data))); err != nil {
 			return err
 		}
 	}
+	//放到controlBuf里面
 	return t.controlBuf.put(df)
 }
 
@@ -970,7 +995,7 @@ func (t *http2Client) handleData(f *http2.DataFrame) {
 		t.closeStream(s, io.EOF, false, http2.ErrCodeNo, status.New(codes.Internal, "server closed the stream without sending trailers"), nil, true)
 	}
 }
-
+//处理rst stream 这个是客户端收到rst stream的处理
 func (t *http2Client) handleRSTStream(f *http2.RSTStreamFrame) {
 	s := t.getStream(f)
 	if s == nil {
@@ -985,6 +1010,7 @@ func (t *http2Client) handleRSTStream(f *http2.RSTStreamFrame) {
 		warningf("transport: http2Client.handleRSTStream found no mapped gRPC status for the received http2 error %v", f.ErrCode)
 		statusCode = codes.Unknown
 	}
+	//如果code代表是取消了
 	if statusCode == codes.Canceled {
 		if d, ok := s.ctx.Deadline(); ok && !d.After(time.Now()) {
 			// Our deadline was already exceeded, and that was likely the cause
@@ -992,6 +1018,7 @@ func (t *http2Client) handleRSTStream(f *http2.RSTStreamFrame) {
 			statusCode = codes.DeadlineExceeded
 		}
 	}
+	//错误是io.EOF
 	t.closeStream(s, io.EOF, false, http2.ErrCodeNo, status.Newf(statusCode, "stream terminated by RST_STREAM with error code: %v", f.ErrCode), nil, false)
 }
 
@@ -1231,7 +1258,7 @@ func (t *http2Client) operateHeaders(frame *http2.MetaHeadersFrame) {
 // TODO(zhaoq): Check the validity of the incoming frame sequence.
 func (t *http2Client) reader() {
 	defer close(t.readerDone)
-	// Check the validity of server preface.
+	// Check the validity of server preface. 读取一个frame
 	frame, err := t.framer.fr.ReadFrame()
 	if err != nil {
 		t.Close() // this kicks off resetTransport, so must be last before return
@@ -1253,7 +1280,7 @@ func (t *http2Client) reader() {
 	for {
 		t.controlBuf.throttle()
 		frame, err := t.framer.fr.ReadFrame()
-		if t.keepaliveEnabled {
+		if t.keepaliveEnabled { //如果有keepalive ,则记录一下最后的read时间
 			atomic.StoreInt64(&t.lastRead, time.Now().UnixNano())
 		}
 		if err != nil {

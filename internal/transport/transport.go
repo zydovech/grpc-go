@@ -95,12 +95,13 @@ func (b *recvBuffer) put(r recvMsg) {
 	b.mu.Lock()
 	if b.err != nil {
 		b.mu.Unlock()
+		//之前已经有错误数据了，不再接收任何东西
 		// An error had occurred earlier, don't accept more
 		// data or errors.
 		return
 	}
 	b.err = r.err
-	if len(b.backlog) == 0 {
+	if len(b.backlog) == 0 {//如果为0，则说明之前没有缓存数据，直接把数据放到chan里面。。
 		select {
 		case b.c <- r:
 			b.mu.Unlock()
@@ -108,6 +109,7 @@ func (b *recvBuffer) put(r recvMsg) {
 		default:
 		}
 	}
+	//backlog里面有数据，说明chan里面的数据还没有取完
 	b.backlog = append(b.backlog, r)
 	b.mu.Unlock()
 }
@@ -233,21 +235,26 @@ const (
 type Stream struct {
 	id           uint32
 	st           ServerTransport    // nil for client side Stream
-	ct           *http2Client       // nil for server side Stream
+	ct           *http2Client       // nil for server side Stream 代表的是底层的tcp连接
 	ctx          context.Context    // the associated context of the stream
 	cancel       context.CancelFunc // always nil for client side Stream
-	done         chan struct{}      // closed at the end of stream to unblock writers. On the client side.
+	done         chan struct{}      // closed at the end of stream to unblock writers. On the client side. 在stream关闭的时候，会close该chan
 	ctxDone      <-chan struct{}    // same as done chan but for server side. Cache of ctx.Done() (for performance)
 	method       string             // the associated RPC method of the stream
 	recvCompress string
 	sendCompress string
-	buf          *recvBuffer
+	/*
+	func (s *Stream) write(m recvMsg) {
+		s.buf.put(m)
+	}
+	*/
+	buf          *recvBuffer //用于存放收到的数据，当从连接上收到数据后，会调用对应的stream的write进行写 ，trReader就是对这个的封装
 	trReader     io.Reader
 	fc           *inFlow
 	wq           *writeQuota
 
 	// Callback to state application's intentions to read data. This
-	// is used to adjust flow control, if needed.
+	// is used to adjust flow control, if needed. 读数据之前调用？flow control?
 	requestRead func(int)
 
 	headerChan       chan struct{} // closed to indicate the end of header metadata.
@@ -271,10 +278,11 @@ type Stream struct {
 	// On the server-side, headerSent is atomically set to 1 when the headers are sent out.
 	headerSent uint32
 
-	state streamState
+	state streamState //记录该stream的状态
 
 	// On client-side it is the status error received from the server.
 	// On server-side it is unused.
+	//客户端用户记录从server收到的错误
 	status *status.Status
 
 	bytesReceived uint32 // indicates whether any bytes have been received on this stream
@@ -308,6 +316,7 @@ func (s *Stream) getState() streamState {
 	return streamState(atomic.LoadUint32((*uint32)(&s.state)))
 }
 
+//等待对端的header frame传递过来
 func (s *Stream) waitOnHeader() {
 	if s.headerChan == nil {
 		// On the server headerChan is always nil since a stream originates
@@ -316,6 +325,7 @@ func (s *Stream) waitOnHeader() {
 	}
 	select {
 	case <-s.ctx.Done():
+		//设置的超时时间，在这里起作用
 		// Close the stream to prevent headers/trailers from changing after
 		// this function returns.
 		s.ct.CloseStream(s, ContextErr(s.ctx.Err()))
@@ -329,6 +339,7 @@ func (s *Stream) waitOnHeader() {
 // RecvCompress returns the compression algorithm applied to the inbound
 // message. It is empty string if there is no compression applied.
 func (s *Stream) RecvCompress() string {
+	//等待对方的header frame到来
 	s.waitOnHeader()
 	return s.recvCompress
 }

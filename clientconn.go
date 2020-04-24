@@ -243,8 +243,8 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		// Only try to parse target when resolver builder is not already set.
 		cc.parsedTarget = parseTarget(cc.target)
 		grpclog.Infof("parsed scheme: %q", cc.parsedTarget.Scheme)
-		cc.dopts.resolverBuilder = resolver.Get(cc.parsedTarget.Scheme)
-		if cc.dopts.resolverBuilder == nil {
+		cc.dopts.resolverBuilder = resolver.Get(cc.parsedTarget.Scheme) //依据target来设置scheme
+		if cc.dopts.resolverBuilder == nil { //没有找到resolver builder,说明对应schema的resolverBuilder注册，则采用默认的
 			// If resolver builder is still nil, the parsed target's scheme is
 			// not registered. Fallback to default resolver and set Endpoint to
 			// the original target.
@@ -296,7 +296,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		Target:           cc.parsedTarget,
 	}
 
-	// Build the resolver.
+	// Build the resolver. 只会建立一个
 	rWrapper, err := newCCResolverWrapper(cc)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build resolver: %v", err)
@@ -459,6 +459,7 @@ type ClientConn struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	//建立的时候，传递的target
 	target       string
 	parsedTarget resolver.Target
 	authority    string
@@ -466,19 +467,23 @@ type ClientConn struct {
 	csMgr        *connectivityStateManager
 
 	balancerBuildOpts balancer.BuildOptions
+	//resolver和balance的结果就是在pickerWrapper 里面，最后就是一个picker
 	blockingpicker    *pickerWrapper
 
 	mu              sync.RWMutex
+	//resolver相关
 	resolverWrapper *ccResolverWrapper
 	sc              *ServiceConfig
-	conns           map[*addrConn]struct{}
+	conns           map[*addrConn]struct{} //addrConn代表的就是底层的每一个连接
 	// Keepalive parameter can be updated if a GoAway is received.
 	mkp             keepalive.ClientParameters
+
+	//balancer相关
 	curBalancerName string
 	balancerWrapper *ccBalancerWrapper
 	retryThrottler  atomic.Value
 
-	firstResolveEvent *grpcsync.Event
+	firstResolveEvent *grpcsync.Event //第一次resolver结束的时候调用
 
 	channelzID int64 // channelz unique identification number
 	czData     *channelzData
@@ -652,7 +657,7 @@ func (cc *ClientConn) updateResolverState(s resolver.State, err error) error {
 //
 // Caller must hold cc.mu.
 func (cc *ClientConn) switchBalancer(name string) {
-	if strings.EqualFold(cc.curBalancerName, name) {
+	if strings.EqualFold(cc.curBalancerName, name) {//相同的话，则直接返回
 		return
 	}
 
@@ -664,7 +669,7 @@ func (cc *ClientConn) switchBalancer(name string) {
 	if cc.balancerWrapper != nil {
 		cc.balancerWrapper.close()
 	}
-
+	//获取builder
 	builder := balancer.Get(name)
 	if channelz.IsOn() {
 		if builder == nil {
@@ -908,7 +913,7 @@ func (cc *ClientConn) applyServiceConfigAndBalancer(sc *ServiceConfig, addrs []r
 		cc.retryThrottler.Store((*retryThrottler)(nil))
 	}
 
-	if cc.dopts.balancerBuilder == nil {
+	if cc.dopts.balancerBuilder == nil { //这里会一直为nil
 		// Only look at balancer types and switch balancer if balancer dial
 		// option is not set.
 		var newBalancerName string
@@ -1036,6 +1041,7 @@ type addrConn struct {
 
 	mu      sync.Mutex
 	curAddr resolver.Address   // The current address.
+	//这个addrConn 对应的底层地址，正常只有一个
 	addrs   []resolver.Address // All addresses that the resolver resolved to.
 
 	// Use updateConnectivityState for updating addrConn's connectivity state.
@@ -1078,10 +1084,11 @@ func (ac *addrConn) adjustParams(r transport.GoAwayReason) {
 		ac.cc.mu.Unlock()
 	}
 }
-
+//这里就是保持一个连接的地方，
 func (ac *addrConn) resetTransport() {
 	for i := 0; ; i++ {
 		if i > 0 {
+			//大于0，就说明之前的连接断了
 			ac.cc.resolveNow(resolver.ResolveNowOptions{})
 		}
 
@@ -1090,8 +1097,9 @@ func (ac *addrConn) resetTransport() {
 			ac.mu.Unlock()
 			return
 		}
-
+		//该连接对应的底层地址
 		addrs := ac.addrs
+		//backoff测量
 		backoffFor := ac.dopts.bs.Backoff(ac.backoffIdx)
 		// This will be the duration that dial gets to finish.
 		dialDuration := minConnectTimeout
@@ -1114,7 +1122,7 @@ func (ac *addrConn) resetTransport() {
 		ac.updateConnectivityState(connectivity.Connecting, nil)
 		ac.transport = nil
 		ac.mu.Unlock()
-
+		//建立连接
 		newTr, addr, reconnect, err := ac.tryAllAddrs(addrs, connectDeadline)
 		if err != nil {
 			// After exhausting all addresses, the addrConn enters
@@ -1161,6 +1169,7 @@ func (ac *addrConn) resetTransport() {
 
 		// Block until the created transport is down. And when this happens,
 		// we restart from the top of the addr list.
+		//阻塞，直到需要重新连接
 		<-reconnect.Done()
 		hcancel()
 		// restart connecting - the top of the loop will set state to
@@ -1240,6 +1249,7 @@ func (ac *addrConn) createTransport(addr resolver.Address, copts transport.Conne
 	}
 
 	once := sync.Once{}
+	//收到GoAway 消息怎么搞
 	onGoAway := func(r transport.GoAwayReason) {
 		ac.mu.Lock()
 		ac.adjustParams(r)
@@ -1305,6 +1315,7 @@ func (ac *addrConn) createTransport(addr resolver.Address, copts transport.Conne
 	return newTr, reconnect, nil
 }
 
+
 // startHealthCheck starts the health checking stream (RPC) to watch the health
 // stats of this connection if health checking is requested and configured.
 //
@@ -1317,6 +1328,7 @@ func (ac *addrConn) createTransport(addr resolver.Address, copts transport.Conne
 // It sets addrConn to READY if the health checking stream is not started.
 //
 // Caller must hold ac.mu.
+//进行健康检查
 func (ac *addrConn) startHealthCheck(ctx context.Context) {
 	var healthcheckManagingState bool
 	defer func() {
@@ -1397,13 +1409,13 @@ func (ac *addrConn) resetConnectBackoff() {
 // If ac's state is IDLE, it will trigger ac to connect.
 func (ac *addrConn) getReadyTransport() (transport.ClientTransport, bool) {
 	ac.mu.Lock()
-	if ac.state == connectivity.Ready && ac.transport != nil {
+	if ac.state == connectivity.Ready && ac.transport != nil {//如果状态是Ready的，且transport不为空
 		t := ac.transport
 		ac.mu.Unlock()
 		return t, true
 	}
 	var idle bool
-	if ac.state == connectivity.Idle {
+	if ac.state == connectivity.Idle {//如果是idle状态的话
 		idle = true
 	}
 	ac.mu.Unlock()

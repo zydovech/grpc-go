@@ -653,15 +653,17 @@ type framer struct {
 	writer *bufWriter
 	fr     *http2.Framer
 }
-
+//创建一个framer，用于读写数据
 func newFramer(conn net.Conn, writeBufferSize, readBufferSize int, maxHeaderListSize uint32) *framer {
 	if writeBufferSize < 0 {
 		writeBufferSize = 0
 	}
+	//读数据源就是conn
 	var r io.Reader = conn
 	if readBufferSize > 0 {
 		r = bufio.NewReaderSize(r, readBufferSize)
 	}
+	//写数据源也是conn,构造一个bufWrite
 	w := newBufWriter(conn, writeBufferSize)
 	f := &framer{
 		writer: w,

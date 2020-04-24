@@ -42,6 +42,7 @@ type ClientParameters struct {
 	// If true, client sends keepalive pings even with no active RPCs. If false,
 	// when there are no active RPCs, Time and Timeout will be ignored and no
 	// keepalive pings will be sent.
+	//如果为false，则当没有活动的rpc的时候，不会继续keepalive行为
 	PermitWithoutStream bool // false by default.
 }
 

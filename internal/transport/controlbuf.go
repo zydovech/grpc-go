@@ -121,7 +121,7 @@ func (h *headerFrame) isTransportResponseFrame() bool {
 
 type cleanupStream struct {
 	streamID uint32
-	rst      bool
+	rst      bool //是否要发送rst到对端
 	rstCode  http2.ErrCode
 	onWrite  func()
 }
@@ -130,7 +130,7 @@ func (c *cleanupStream) isTransportResponseFrame() bool { return c.rst } // Resu
 
 type dataFrame struct {
 	streamID  uint32
-	endStream bool
+	endStream bool //是否是end
 	h         []byte
 	d         []byte
 	// onEachWrite is called every time
@@ -207,7 +207,7 @@ type outStream struct {
 	id               uint32
 	state            outStreamState
 	itl              *itemList
-	bytesOutStanding int
+	bytesOutStanding int //发送的数据量
 	wq               *writeQuota
 
 	next *outStream
@@ -264,7 +264,7 @@ func (l *outStreamList) dequeue() *outStream {
 	return b
 }
 
-// controlBuffer is a way to pass information to loopy.
+// controlBuffer is a way to pass information to loopy. 传递数据给loopy的一种途径
 // Information is passed as specific struct types called control frames.
 // A control frame not only represents data, messages or headers to be sent out
 // but can also be used to instruct loopy to update its internal state.
@@ -311,7 +311,7 @@ func (c *controlBuffer) put(it cbItem) error {
 	_, err := c.executeAndPut(nil, it)
 	return err
 }
-
+//执行函数，并把it放到 itemList中，后续处理
 func (c *controlBuffer) executeAndPut(f func(it interface{}) bool, it cbItem) (bool, error) {
 	var wakeUp bool
 	c.mu.Lock()
@@ -442,12 +442,12 @@ const (
 type loopyWriter struct {
 	side      side
 	cbuf      *controlBuffer
-	sendQuota uint32
+	sendQuota uint32 //还有多少可以发送
 	oiws      uint32 // outbound initial window size.
 	// estdStreams is map of all established streams that are not cleaned-up yet.
 	// On client-side, this is all streams whose headers were sent out.
 	// On server-side, this is all streams whose headers were received.
-	estdStreams map[uint32]*outStream // Established streams.
+	estdStreams map[uint32]*outStream // Established streams. //建立的stream，发送了header的
 	// activeStreams is a linked-list of all streams that have data to send and some
 	// stream-level flow control quota.
 	// Each of these streams internally have a list of data items(and perhaps trailers
@@ -510,13 +510,16 @@ func (l *loopyWriter) run() (err error) {
 		}
 	}()
 	for {
+		//获取一个数据
 		it, err := l.cbuf.get(true)
 		if err != nil {
 			return err
 		}
+		//相当于预处理所有要发送的数据，header 数据，dataFrame
 		if err = l.handle(it); err != nil {
 			return err
 		}
+		//真正的发送数据，stream里面要发送的数据
 		if _, err = l.processData(); err != nil {
 			return err
 		}
@@ -624,26 +627,28 @@ func (l *loopyWriter) headerHandler(h *headerFrame) error {
 		}
 		return l.cleanupStreamHandler(h.cleanup)
 	}
-	// Case 2: Client wants to originate stream.
+	// Case 2: Client wants to originate stream. 客户端新建一个stream
 	str := &outStream{
 		id:    h.streamID,
 		state: empty,
 		itl:   &itemList{},
 		wq:    h.wq,
 	}
+	//放入itemList里面
 	str.itl.enqueue(h)
 	return l.originateStream(str)
 }
-
+//初始化一个stream
 func (l *loopyWriter) originateStream(str *outStream) error {
 	hdr := str.itl.dequeue().(*headerFrame)
-	if err := hdr.initStream(str.id); err != nil {
+	if err := hdr.initStream(str.id); err != nil { //调用initSteam函数，把当前stream注册到http2Client里面的activeStreams
 		if err == ErrConnClosing {
 			return err
 		}
 		// Other errors(errStreamDrain) need not close transport.
 		return nil
 	}
+	//
 	if err := l.writeHeader(str.id, hdr.endStream, hdr.hf, hdr.onWrite); err != nil {
 		return err
 	}
@@ -668,13 +673,16 @@ func (l *loopyWriter) writeHeader(streamID uint32, endStream bool, hf []hpack.He
 	first = true
 	for !endHeaders {
 		size := l.hBuf.Len()
+		//要写的头部的长度，
 		if size > http2MaxFrameLen {
 			size = http2MaxFrameLen
 		} else {
+			//小于的话，一次发送了，就已经结束了
 			endHeaders = true
 		}
 		if first {
 			first = false
+			//发送HeaderFrame数据
 			err = l.framer.fr.WriteHeaders(http2.HeadersFrameParam{
 				StreamID:      streamID,
 				BlockFragment: l.hBuf.Next(size),
@@ -682,6 +690,7 @@ func (l *loopyWriter) writeHeader(streamID uint32, endStream bool, hf []hpack.He
 				EndHeaders:    endHeaders,
 			})
 		} else {
+			//继续发送
 			err = l.framer.fr.WriteContinuation(
 				streamID,
 				endHeaders,
@@ -696,12 +705,15 @@ func (l *loopyWriter) writeHeader(streamID uint32, endStream bool, hf []hpack.He
 }
 
 func (l *loopyWriter) preprocessData(df *dataFrame) error {
+	//收到rst_stream之后，会删除，这样写数据也没有作用
 	str, ok := l.estdStreams[df.streamID]
 	if !ok {
 		return nil
 	}
 	// If we got data for a stream it means that
 	// stream was originated and the headers were sent out.
+	//如果我们在一个stream上有data要发送
+	//这里又放到了outStream里面。。交由后面的流程进行处理
 	str.itl.enqueue(df)
 	if str.state == empty {
 		str.state = active
@@ -730,9 +742,10 @@ func (l *loopyWriter) cleanupStreamHandler(c *cleanupStream) error {
 		// a RST_STREAM before stream initialization thus the stream might
 		// not be established yet.
 		delete(l.estdStreams, c.streamID)
+		//把自己从链表里面删除
 		str.deleteSelf()
 	}
-	if c.rst { // If RST_STREAM needs to be sent.
+	if c.rst { // If RST_STREAM needs to be sent. 需要需要发送rst，则发送RSTStream，并带上rstCode
 		if err := l.framer.fr.WriteRSTStream(c.streamID, c.rstCode); err != nil {
 			return err
 		}
@@ -822,13 +835,16 @@ func (l *loopyWriter) applySettings(ss []http2.Setting) error {
 // of its data and then puts it at the end of activeStreams if there's still more data
 // to be sent and stream has some stream-level flow control.
 func (l *loopyWriter) processData() (bool, error) {
-	if l.sendQuota == 0 {
+	if l.sendQuota == 0 { //如果quota了，则需要返回
 		return true, nil
 	}
+	//找出第一个要发送数据的stream
 	str := l.activeStreams.dequeue() // Remove the first stream.
 	if str == nil {
 		return true, nil
 	}
+
+	//获取对应的dataFrame
 	dataItem := str.itl.peek().(*dataFrame) // Peek at the first data item this stream.
 	// A data item is represented by a dataFrame, since it later translates into
 	// multiple HTTP2 data frames.
@@ -896,9 +912,12 @@ func (l *loopyWriter) processData() (bool, error) {
 	if err := l.framer.fr.WriteData(dataItem.streamID, endStream, buf[:size]); err != nil {
 		return false, err
 	}
+	//计算还有多少没有发送
 	buf = buf[size:]
 	str.bytesOutStanding += size
+
 	l.sendQuota -= uint32(size)
+	//把剩余的没有发送的放回去
 	if idx == 0 {
 		dataItem.h = buf
 	} else {
@@ -906,9 +925,11 @@ func (l *loopyWriter) processData() (bool, error) {
 	}
 
 	if len(dataItem.h) == 0 && len(dataItem.d) == 0 { // All the data from that message was written out.
+		//如果发送完了，就直接清了
 		str.itl.dequeue()
 	}
 	if str.itl.isEmpty() {
+		//如果已经没有数据要发送了，则置位空状态
 		str.state = empty
 	} else if trailer, ok := str.itl.peek().(*headerFrame); ok { // The next item is trailers.
 		if err := l.writeHeader(trailer.streamID, trailer.endStream, trailer.hf, trailer.onWrite); err != nil {
@@ -918,9 +939,9 @@ func (l *loopyWriter) processData() (bool, error) {
 			return false, err
 		}
 	} else if int(l.oiws)-str.bytesOutStanding <= 0 { // Ran out of stream quota.
-		str.state = waitingOnStreamQuota
+		str.state = waitingOnStreamQuota //超出了配额，则等待
 	} else { // Otherwise add it back to the list of active streams.
-		l.activeStreams.enqueue(str)
+		l.activeStreams.enqueue(str) //重新加入等待下次发送
 	}
 	return false, nil
 }

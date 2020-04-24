@@ -52,10 +52,11 @@ func newWriteQuota(sz int32, done <-chan struct{}) *writeQuota {
 
 func (w *writeQuota) get(sz int32) error {
 	for {
-		if atomic.LoadInt32(&w.quota) > 0 {
+		if atomic.LoadInt32(&w.quota) > 0 {//如果quota还大于0，就可以
 			atomic.AddInt32(&w.quota, -sz)
 			return nil
 		}
+		//没有足够的quota的话，就需要等待
 		select {
 		case <-w.ch:
 			continue

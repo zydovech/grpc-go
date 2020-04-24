@@ -36,11 +36,11 @@ import (
 // ccResolverWrapper is a wrapper on top of cc for resolvers.
 // It implements resolver.ClientConnection interface.
 type ccResolverWrapper struct {
-	cc         *ClientConn
+	cc         *ClientConn //全局的ClientConn
 	resolverMu sync.Mutex
-	resolver   resolver.Resolver
-	done       *grpcsync.Event
-	curState   resolver.State
+	resolver   resolver.Resolver //根据target build出来的resolver
+	done       *grpcsync.Event  //是否结束
+	curState   resolver.State //代表当前最新的状态，
 
 	pollingMu sync.Mutex
 	polling   chan struct{}
@@ -133,21 +133,21 @@ func (ccr *ccResolverWrapper) close() {
 func (ccr *ccResolverWrapper) poll(err error) {
 	ccr.pollingMu.Lock()
 	defer ccr.pollingMu.Unlock()
-	if err != balancer.ErrBadResolverState {
+	if err != balancer.ErrBadResolverState { //如果错误不是balancer.ErrBadResolverState，说明解析出来的地址没有问题
 		// stop polling
-		if ccr.polling != nil {
+		if ccr.polling != nil { //如果正在polling，则停止
 			close(ccr.polling)
 			ccr.polling = nil
 		}
 		return
 	}
-	if ccr.polling != nil {
+	if ccr.polling != nil { //如果已经有polling存在，则退出
 		// already polling
 		return
 	}
 	p := make(chan struct{})
 	ccr.polling = p
-	go func() {
+	go func() {//后台不断的调用resolver的ResolverNow方法来进行解析
 		for i := 0; ; i++ {
 			ccr.resolveNow(resolver.ResolveNowOptions{})
 			t := time.NewTimer(ccr.cc.dopts.resolveNowBackoff(i))
@@ -171,6 +171,7 @@ func (ccr *ccResolverWrapper) poll(err error) {
 	}()
 }
 
+//resolve模块如果发现服务节点有更新，则调用该方法来通知grpc最新的状态
 func (ccr *ccResolverWrapper) UpdateState(s resolver.State) {
 	if ccr.done.HasFired() {
 		return
@@ -179,7 +180,9 @@ func (ccr *ccResolverWrapper) UpdateState(s resolver.State) {
 	if channelz.IsOn() {
 		ccr.addChannelzTraceEvent(s)
 	}
+	//更新状态
 	ccr.curState = s
+	//调用ClientConn的updateResolverState，把最新的连接信息通知给grpc
 	ccr.poll(ccr.cc.updateResolverState(ccr.curState, nil))
 }
 

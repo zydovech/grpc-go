@@ -480,6 +480,7 @@ const (
 )
 
 // parser reads complete gRPC messages from the underlying reader.
+//从r里面读取一个完整的grpc消息
 type parser struct {
 	// r is the underlying reader.
 	// See the comment on recvMsg for the permissible
@@ -589,6 +590,7 @@ const (
 
 // msgHeader returns a 5-byte header for the message being transmitted and the
 // payload, which is compData if non-nil or data otherwise.
+//组装grpc的消息。。5个字节的头部。。第一个字节代表了是否压缩
 func msgHeader(data, compData []byte) (hdr []byte, payload []byte) {
 	hdr = make([]byte, headerLen)
 	if compData != nil {

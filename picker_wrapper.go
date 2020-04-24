@@ -58,7 +58,7 @@ type pickerWrapper struct {
 	mu         sync.Mutex
 	done       bool
 	blockingCh chan struct{}
-	picker     balancer.V2Picker
+	picker     balancer.V2Picker //底层的picker
 
 	// The latest connection error.  TODO: remove when V1 picker is deprecated;
 	// balancer should be responsible for providing the error.
@@ -141,10 +141,10 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 			return nil, nil, ErrClientConnClosing
 		}
 
-		if pw.picker == nil {
+		if pw.picker == nil { //如果picker为空，则说明底层还没有建立真正的picker，还没有调用updatePicker进行处理
 			ch = pw.blockingCh
 		}
-		if ch == pw.blockingCh {
+		if ch == pw.blockingCh { //如果相同，则进行等待
 			// This could happen when either:
 			// - pw.picker is nil (the previous if condition), or
 			// - has called pick on the current picker.
@@ -177,7 +177,7 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 		pickResult, err := p.Pick(info)
 
 		if err != nil {
-			if err == balancer.ErrNoSubConnAvailable {
+			if err == balancer.ErrNoSubConnAvailable {//没有可用的连接，则继续
 				continue
 			}
 			if tfe, ok := err.(interface{ IsTransientFailure() bool }); ok && tfe.IsTransientFailure() {

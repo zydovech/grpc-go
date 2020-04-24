@@ -49,10 +49,12 @@ func main() {
 		name = os.Args[1]
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx=context.WithValue(ctx,"aaaaa","xxxxxxx")
 	defer cancel()
 	r, err := c.SayHello(ctx, &pb.HelloRequest{Name: name})
 	if err != nil {
-		log.Fatalf("could not greet: %v", err)
+		log.Printf("could not greet: %v", err)
 	}
+	time.Sleep(100*time.Second)
 	log.Printf("Greeting: %s", r.GetMessage())
 }
