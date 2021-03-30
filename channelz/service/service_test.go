@@ -421,8 +421,8 @@ func TestGetServerSockets(t *testing.T) {
 	}
 }
 
-// This test makes a GetServerSockets with a non-zero start ID, and expect only
-// sockets with ID >= the given start ID.
+// This test makes a GetServerSockets with a non-zero start NodeId, and expect only
+// sockets with NodeId >= the given start NodeId.
 func TestGetServerSocketsNonZeroStartID(t *testing.T) {
 	czCleanup := channelz.NewChannelzStorage()
 	defer cleanupWrapper(czCleanup, t)
@@ -444,7 +444,7 @@ func TestGetServerSocketsNonZeroStartID(t *testing.T) {
 		t.Fatalf("resp.GetEnd() want: true, got: %v", resp.GetEnd())
 	}
 	// GetServerSockets only return normal socket-2, socket-1 should be
-	// filtered by start ID.
+	// filtered by start NodeId.
 	want := map[int64]string{
 		ids[2]: refNames[2],
 	}
@@ -539,7 +539,7 @@ func TestGetChannel(t *testing.T) {
 		}
 		if e.GetChannelRef().GetChannelId() != want[i].childID || e.GetChannelRef().GetName() != want[i].childRef {
 			if e.GetSubchannelRef().GetSubchannelId() != want[i].childID || e.GetSubchannelRef().GetName() != want[i].childRef {
-				t.Fatalf("trace: GetChannelRef/GetSubchannelRef want (child ID: %d, child name: %q), got %#v and %#v", want[i].childID, want[i].childRef, e.GetChannelRef(), e.GetSubchannelRef())
+				t.Fatalf("trace: GetChannelRef/GetSubchannelRef want (child NodeId: %d, child name: %q), got %#v and %#v", want[i].childID, want[i].childRef, e.GetChannelRef(), e.GetSubchannelRef())
 			}
 		}
 	}
@@ -622,7 +622,7 @@ func TestGetSubChannel(t *testing.T) {
 		}
 		if e.GetChannelRef().GetChannelId() != wantTrace[i].childID || e.GetChannelRef().GetName() != wantTrace[i].childRef {
 			if e.GetSubchannelRef().GetSubchannelId() != wantTrace[i].childID || e.GetSubchannelRef().GetName() != wantTrace[i].childRef {
-				t.Fatalf("trace: GetChannelRef/GetSubchannelRef want (child ID: %d, child name: %q), got %#v and %#v", wantTrace[i].childID, wantTrace[i].childRef, e.GetChannelRef(), e.GetSubchannelRef())
+				t.Fatalf("trace: GetChannelRef/GetSubchannelRef want (child NodeId: %d, child name: %q), got %#v and %#v", wantTrace[i].childID, wantTrace[i].childRef, e.GetChannelRef(), e.GetSubchannelRef())
 			}
 		}
 	}

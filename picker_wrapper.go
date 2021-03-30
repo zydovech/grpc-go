@@ -174,6 +174,7 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 		p := pw.picker
 		pw.mu.Unlock()
 
+		//先依据地址选择一个服务，就相当于选择了一个地址
 		pickResult, err := p.Pick(info)
 
 		if err != nil {
@@ -199,6 +200,7 @@ func (pw *pickerWrapper) pick(ctx context.Context, failfast bool, info balancer.
 			grpclog.Error("subconn returned from pick is not *acBalancerWrapper")
 			continue
 		}
+		//获取该地址对应的transport
 		if t, ok := acw.getAddrConn().getReadyTransport(); ok {
 			if channelz.IsOn() {
 				return t, doneChannelzWrapper(acw, pickResult.Done), nil

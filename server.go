@@ -1004,11 +1004,14 @@ func (s *Server) processUnaryRPC(t transport.ServerTransport, stream *transport.
 		return nil
 	}
 	ctx := NewContextWithServerTransportStream(stream.Context(), stream)
+	//调用方法进行处理，
 	reply, appErr := md.Handler(srv.server, ctx, df, s.opts.unaryInt)
-	if appErr != nil {
+
+	if appErr != nil { //返回了error，则对error进行包装
 		appStatus, ok := status.FromError(appErr)
 		if !ok {
 			// Convert appErr if it is not a grpc status error.
+			//组装为Unknown
 			appErr = status.Error(codes.Unknown, appErr.Error())
 			appStatus, _ = status.FromError(appErr)
 		}

@@ -51,7 +51,7 @@ func TestEDSParseRespProto(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "missing-locality-ID",
+			name: "missing-locality-NodeId",
 			m: func() *xdspb.ClusterLoadAssignment {
 				clab0 := NewClusterLoadAssignmentBuilder("test", nil)
 				clab0.AddLocality("", 1, 0, []string{"addr1:314"}, nil)

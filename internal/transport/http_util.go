@@ -107,13 +107,14 @@ type parsedHeaderData struct {
 	statusGen *status.Status
 	// rawStatusCode and rawStatusMsg are set from the raw trailer fields and are not
 	// intended for direct access outside of parsing.
-	rawStatusCode *int
-	rawStatusMsg  string
-	httpStatus    *int
-	// Server side only fields.
+	//是从携带的字段中解析出来的，不能从外部直接返回
+	rawStatusCode *int //原始的code
+	rawStatusMsg  string //原始的msg
+	httpStatus    *int //代表的是http请求的状态码，因为grpc是http2的，也是http。有自己
+	// Server side only fields.超时相关的，是只有服务端会有。。用于传递timeout的值
 	timeoutSet bool
 	timeout    time.Duration
-	method     string
+	method     string //请求的方法
 	// key-value metadata map from the peer.
 	mdata          map[string][]string
 	statsTags      []byte
@@ -126,11 +127,11 @@ type parsedHeaderData struct {
 	// 	* We are client side and have already received a HEADER frame that indicates gRPC peer.
 	//  * The header contains valid  a content-type, i.e. a string starts with "application/grpc"
 	// And we should handle error specific to gRPC.
-	//
+	// 收到了header frame，并且content-type是 application/grpc
 	// Otherwise (i.e. a content-type string starts without "application/grpc", or does not exist), we
 	// are in HTTP fallback mode, and should handle error specific to HTTP.
-	isGRPC         bool
-	grpcErr        error
+	isGRPC         bool //指示了对端是grpc的，不是http的。
+	grpcErr        error //记录解析头部的时候，遇到的error
 	httpErr        error
 	contentTypeErr string
 }
@@ -265,12 +266,13 @@ func (d *decodeState) decodeHeader(frame *http2.MetaHeadersFrame) error {
 	if frame.Truncated {
 		return status.Error(codes.Internal, "peer header list size exceeded limit")
 	}
-
+	//解析所有的头部
 	for _, hf := range frame.Fields {
 		d.processHeaderField(hf)
 	}
 
 	if d.data.isGRPC {
+		//是grpc的模式
 		if d.data.grpcErr != nil {
 			return d.data.grpcErr
 		}
@@ -336,7 +338,7 @@ func (d *decodeState) addMetadata(k, v string) {
 	}
 	d.data.mdata[k] = append(d.data.mdata[k], v)
 }
-
+//解析grpc回复的头部
 func (d *decodeState) processHeaderField(f hpack.HeaderField) {
 	switch f.Name {
 	case "content-type":
@@ -355,6 +357,7 @@ func (d *decodeState) processHeaderField(f hpack.HeaderField) {
 	case "grpc-encoding":
 		d.data.encoding = f.Value
 	case "grpc-status":
+		//代表请求的状态
 		code, err := strconv.Atoi(f.Value)
 		if err != nil {
 			d.data.grpcErr = status.Errorf(codes.Internal, "transport: malformed grpc-status: %v", err)
@@ -362,6 +365,7 @@ func (d *decodeState) processHeaderField(f hpack.HeaderField) {
 		}
 		d.data.rawStatusCode = &code
 	case "grpc-message":
+		//状态对应的message
 		d.data.rawStatusMsg = decodeGrpcMessage(f.Value)
 	case "grpc-status-details-bin":
 		v, err := decodeBinHeader(f.Value)

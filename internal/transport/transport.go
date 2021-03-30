@@ -501,7 +501,7 @@ func (s *Stream) BytesReceived() bool {
 }
 
 // Unprocessed indicates whether the server did not process this stream --
-// i.e. it sent a refused stream or GOAWAY including this stream ID.
+// i.e. it sent a refused stream or GOAWAY including this stream NodeId.
 func (s *Stream) Unprocessed() bool {
 	return atomic.LoadUint32(&s.unprocessed) == 1
 }
@@ -764,7 +764,7 @@ var (
 	// layer of an error.
 	errStreamDone = errors.New("the stream is done")
 	// StatusGoAway indicates that the server sent a GOAWAY that included this
-	// stream's ID in unprocessed RPCs.
+	// stream's NodeId in unprocessed RPCs.
 	statusGoAway = status.New(codes.Unavailable, "the stream is rejected because server is draining the connection")
 )
 

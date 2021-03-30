@@ -660,7 +660,7 @@ func DoPickFirstUnary(tc testpb.TestServiceClient) {
 		}
 		id := resp.ServerId
 		if id == "" {
-			grpclog.Fatalf("iteration %d, got empty server ID", i)
+			grpclog.Fatalf("iteration %d, got empty server NodeId", i)
 		}
 		if i == 0 {
 			serverID = id

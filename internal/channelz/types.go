@@ -42,7 +42,7 @@ type entry interface {
 	// deleteSelfIfReady check whether triggerDelete() has been called before, and whether child
 	// list is now empty. If both conditions are met, then delete self from database.
 	deleteSelfIfReady()
-	// getParentID returns parent ID of the entry. 0 value parent ID means no parent.
+	// getParentID returns parent NodeId of the entry. 0 value parent NodeId means no parent.
 	getParentID() int64
 }
 
@@ -85,7 +85,7 @@ func (*dummyEntry) getParentID() int64 {
 // includes ChannelInternalMetric and channelz-specific data, such as channelz id,
 // child list, etc.
 type ChannelMetric struct {
-	// ID is the channelz id of this channel.
+	// NodeId is the channelz id of this channel.
 	ID int64
 	// RefName is the human readable reference string of this channel.
 	RefName string
@@ -111,7 +111,7 @@ type ChannelMetric struct {
 // which includes ChannelInternalMetric and channelz-specific data, such as
 // channelz id, child list, etc.
 type SubChannelMetric struct {
-	// ID is the channelz id of this subchannel.
+	// NodeId is the channelz id of this subchannel.
 	ID int64
 	// RefName is the human readable reference string of this subchannel.
 	RefName string
@@ -421,7 +421,7 @@ func (sc *subChannel) getRefName() string {
 // SocketMetric defines the info channelz provides for a specific Socket, which
 // includes SocketInternalMetric and channelz-specific data, such as channelz id, etc.
 type SocketMetric struct {
-	// ID is the channelz id of this socket.
+	// NodeId is the channelz id of this socket.
 	ID int64
 	// RefName is the human readable reference string of this socket.
 	RefName string
@@ -546,7 +546,7 @@ func (ns *normalSocket) getParentID() int64 {
 // includes ServerInternalMetric and channelz-specific data, such as channelz id,
 // child list, etc.
 type ServerMetric struct {
-	// ID is the channelz id of this server.
+	// NodeId is the channelz id of this server.
 	ID int64
 	// RefName is the human readable reference string of this server.
 	RefName string

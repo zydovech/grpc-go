@@ -148,7 +148,7 @@ type ClientHeader struct {
 }
 
 func (c *ClientHeader) toProto() *pb.GrpcLogEntry {
-	// This function doesn't need to set all the fields (e.g. seq ID). The Log
+	// This function doesn't need to set all the fields (e.g. seq NodeId). The Log
 	// function will set the fields when necessary.
 	clientHeader := &pb.ClientHeader{
 		Metadata:   mdToMetadataProto(c.Header),

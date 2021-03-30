@@ -727,7 +727,7 @@ type noopBalancerBuilderWrapper struct {
 	balancer.Builder
 }
 
-// After removing a sub-balancer, re-add with same ID, but different balancer
+// After removing a sub-balancer, re-add with same NodeId, but different balancer
 // builder. Old subconns should be removed, and new subconns should be created.
 func TestBalancerGroup_locality_caching_readd_with_different_builder(t *testing.T) {
 	defer replaceDefaultSubBalancerCloseTimeout(10 * time.Second)()

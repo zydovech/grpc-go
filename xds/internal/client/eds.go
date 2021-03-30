@@ -127,7 +127,7 @@ func ParseEDSRespProto(m *xdspb.ClusterLoadAssignment) (*EDSUpdate, error) {
 	for _, locality := range m.Endpoints {
 		l := locality.GetLocality()
 		if l == nil {
-			return nil, fmt.Errorf("EDS response contains a locality without ID, locality: %+v", locality)
+			return nil, fmt.Errorf("EDS response contains a locality without NodeId, locality: %+v", locality)
 		}
 		lid := internal.Locality{
 			Region:  l.Region,

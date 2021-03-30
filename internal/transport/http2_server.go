@@ -73,7 +73,7 @@ type http2Server struct {
 	writerDone  chan struct{} // sync point to enable testing.
 	remoteAddr  net.Addr
 	localAddr   net.Addr
-	maxStreamID uint32               // max stream ID ever seen
+	maxStreamID uint32               // max stream NodeId ever seen
 	authInfo    credentials.AuthInfo // auth info about the connection
 	inTapHandle tap.ServerInHandle
 	framer      *framer
@@ -103,9 +103,9 @@ type http2Server struct {
 	mu sync.Mutex // guard the following
 
 	// drainChan is initialized when drain(...) is called the first time.
-	// After which the server writes out the first GoAway(with ID 2^31-1) frame.
+	// After which the server writes out the first GoAway(with NodeId 2^31-1) frame.
 	// Then an independent goroutine will be launched to later send the second GoAway.
-	// During this time we don't want to write another first GoAway(with ID 2^31 -1) frame.
+	// During this time we don't want to write another first GoAway(with NodeId 2^31 -1) frame.
 	// Thus call to drain(...) will be a no-op if drainChan is already initialized since draining is
 	// already underway.
 	drainChan     chan struct{}
@@ -837,6 +837,7 @@ func (t *http2Server) WriteStatus(s *Stream, st *status.Status) error {
 			headerFields = append(headerFields, hpack.HeaderField{Name: "content-type", Value: contentType(s.contentSubtype)})
 		}
 	}
+	//封装grpc-status和grpc-message
 	headerFields = append(headerFields, hpack.HeaderField{Name: "grpc-status", Value: strconv.Itoa(int(st.Code()))})
 	headerFields = append(headerFields, hpack.HeaderField{Name: "grpc-message", Value: encodeGrpcMessage(st.Message())})
 
@@ -1158,12 +1159,12 @@ func (t *http2Server) outgoingGoAwayHandler(g *goAway) (bool, error) {
 		return true, nil
 	}
 	t.mu.Unlock()
-	// For a graceful close, send out a GoAway with stream ID of MaxUInt32,
+	// For a graceful close, send out a GoAway with stream NodeId of MaxUInt32,
 	// Follow that with a ping and wait for the ack to come back or a timer
 	// to expire. During this time accept new streams since they might have
 	// originated before the GoAway reaches the client.
 	// After getting the ack or timer expiration send out another GoAway this
-	// time with an ID of the max stream server intends to process.
+	// time with an NodeId of the max stream server intends to process.
 	if err := t.framer.fr.WriteGoAway(math.MaxUint32, http2.ErrCodeNo, []byte{}); err != nil {
 		return false, err
 	}

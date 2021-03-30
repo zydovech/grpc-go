@@ -476,7 +476,7 @@ func WithAuthority(a string) DialOption {
 	})
 }
 
-// WithChannelzParentID returns a DialOption that specifies the channelz ID of
+// WithChannelzParentID returns a DialOption that specifies the channelz NodeId of
 // current ClientConn's parent. This function is used in nested channel creation
 // (e.g. grpclb dial).
 func WithChannelzParentID(id int64) DialOption {

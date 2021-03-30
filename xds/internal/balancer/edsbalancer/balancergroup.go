@@ -46,10 +46,10 @@ type subBalancerWithConfig struct {
 	// wrapper, only to keep the state and picker.  When sub-balancer is
 	// restarted while in cache, the picker needs to be resent.
 	//
-	// It also contains the sub-balancer ID, so the parent balancer group can
+	// It also contains the sub-balancer NodeId, so the parent balancer group can
 	// keep track of SubConn/pickers and the sub-balancers they belong to. Some
 	// of the actions are forwarded to the parent ClientConn with no change.
-	// Some are forward to balancer group with the sub-balancer ID.
+	// Some are forward to balancer group with the sub-balancer NodeId.
 	balancer.ClientConn
 	id    internal.Locality
 	group *balancerGroup
@@ -205,7 +205,7 @@ type balancerGroup struct {
 
 	// incomingMu guards all operations in the direction:
 	// Sub-balancer-->ClientConn. Including NewSubConn, RemoveSubConn, and
-	// updatePicker. It also guards the map from SubConn to balancer ID, so
+	// updatePicker. It also guards the map from SubConn to balancer NodeId, so
 	// handleSubConnStateChange needs to hold it shortly to find the
 	// sub-balancer to forward the update.
 	//
@@ -217,7 +217,7 @@ type balancerGroup struct {
 	// All balancer IDs exist as keys in this map, even if balancer group is not
 	// started.
 	//
-	// If an ID is not in map, it's either removed or never added.
+	// If an NodeId is not in map, it's either removed or never added.
 	idToPickerState map[internal.Locality]*pickerState
 }
 
@@ -355,7 +355,7 @@ func (bg *balancerGroup) remove(id internal.Locality) {
 
 	bg.incomingMu.Lock()
 	// Remove id and picker from picker map. This also results in future updates
-	// for this ID to be ignored.
+	// for this NodeId to be ignored.
 	delete(bg.idToPickerState, id)
 	if bg.incomingStarted {
 		// Normally picker update is triggered by SubConn state change. But we
@@ -490,7 +490,7 @@ func (bg *balancerGroup) updateBalancerState(id internal.Locality, state balance
 	defer bg.incomingMu.Unlock()
 	pickerSt, ok := bg.idToPickerState[id]
 	if !ok {
-		// All state starts in IDLE. If ID is not in map, it's either removed,
+		// All state starts in IDLE. If NodeId is not in map, it's either removed,
 		// or never existed.
 		grpclog.Warningf("balancer group: pickerState for %v not found when update picker/state", id)
 		return

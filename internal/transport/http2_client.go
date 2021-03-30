@@ -104,7 +104,7 @@ type http2Client struct {
 	mu            sync.Mutex // guard the following variables
 	state         transportState
 	activeStreams map[uint32]*Stream //记录当前活跃的stream
-	// prevGoAway ID records the Last-Stream-ID in the previous GOAway frame.
+	// prevGoAway NodeId records the Last-Stream-NodeId in the previous GOAway frame.
 	prevGoAwayID uint32
 	// goAwayReason records the http2.ErrCode and debug data received with the
 	// GoAway frame.
@@ -725,13 +725,14 @@ func (t *http2Client) closeStream(s *Stream, err error, rst bool, rstCode http2.
 	// status and trailers can be updated here without any synchronization because the stream goroutine will
 	// only read it after it sees an io.EOF error from read or write and we'll write those errors
 	// only after updating this.
+	//关闭stream的时候，把当前的状态赋值给s.status
 	s.status = st
 	if len(mdata) > 0 {
 		s.trailer = mdata
 	}
 
 	if err != nil {
-		// This will unblock reads eventually. 写了之后，就能读取到
+		// This will unblock reads eventually. 写了之后，就能读取到,不会再阻塞读操作
 		s.write(recvMsg{err: err})
 	}
 	// If headerChan isn't closed, then close it.
@@ -812,6 +813,7 @@ func (t *http2Client) Close() error {
 	}
 	// Notify all active streams.
 	for _, s := range streams {
+		//关闭所有的stream。。错误提示是transport is closing
 		t.closeStream(s, ErrConnClosing, false, http2.ErrCodeNo, status.New(codes.Unavailable, ErrConnClosing.Desc), nil, false)
 	}
 	if t.statsHandler != nil {
@@ -1101,8 +1103,8 @@ func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 	}
 	// A client can receive multiple GoAways from the server (see
 	// https://github.com/grpc/grpc-go/issues/1387).  The idea is that the first
-	// GoAway will be sent with an ID of MaxInt32 and the second GoAway will be
-	// sent after an RTT delay with the ID of the last stream the server will
+	// GoAway will be sent with an NodeId of MaxInt32 and the second GoAway will be
+	// sent after an RTT delay with the NodeId of the last stream the server will
 	// process.
 	//
 	// Therefore, when we get the first GoAway we don't necessarily close any
@@ -1111,7 +1113,8 @@ func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 	// server was being sent don't get killed.
 	select {
 	case <-t.goAway: // t.goAway has been closed (i.e.,multiple GoAways).
-		// If there are multiple GoAways the first one should always have an ID greater than the following ones.
+		// If there are multiple GoAways the first one should always have an NodeId greater than the following ones.
+		//为啥第一个是最大的，通常发多个GoAways
 		if id > t.prevGoAwayID {
 			t.mu.Unlock()
 			t.Close()
@@ -1128,13 +1131,13 @@ func (t *http2Client) handleGoAway(f *http2.GoAwayFrame) {
 		t.state = draining
 	}
 	// All streams with IDs greater than the GoAwayId
-	// and smaller than the previous GoAway ID should be killed.
+	// and smaller than the previous GoAway NodeId should be killed.
 	upperLimit := t.prevGoAwayID
 	if upperLimit == 0 { // This is the first GoAway Frame.
-		upperLimit = math.MaxUint32 // Kill all streams after the GoAway ID.
+		upperLimit = math.MaxUint32 // Kill all streams after the GoAway NodeId.
 	}
 	for streamID, stream := range t.activeStreams {
-		if streamID > id && streamID <= upperLimit {
+		if streamID > id && streamID <= upperLimit {//关闭所有在goaway之后新建的流
 			// The stream was unprocessed by the server.
 			atomic.StoreUint32(&stream.unprocessed, 1)
 			t.closeStream(stream, errStreamDrain, false, http2.ErrCodeNo, statusGoAway, nil, false)
@@ -1195,6 +1198,7 @@ func (t *http2Client) operateHeaders(frame *http2.MetaHeadersFrame) {
 	state := &decodeState{}
 	// Initialize isGRPC value to be !initialHeader, since if a gRPC Response-Headers has already been received, then it means that the peer is speaking gRPC and we are in gRPC mode.
 	state.data.isGRPC = !initialHeader
+	//解析头部信息
 	if err := state.decodeHeader(frame); err != nil {
 		t.closeStream(s, err, true, http2.ErrCodeProtocol, status.Convert(err), nil, endStream)
 		return
@@ -1240,7 +1244,7 @@ func (t *http2Client) operateHeaders(frame *http2.MetaHeadersFrame) {
 		}
 		close(s.headerChan)
 	}
-
+	//这里就endStream了。。
 	if !endStream {
 		return
 	}
@@ -1279,6 +1283,7 @@ func (t *http2Client) reader() {
 	// loop to keep reading incoming messages on this transport.
 	for {
 		t.controlBuf.throttle()
+		//读取数据
 		frame, err := t.framer.fr.ReadFrame()
 		if t.keepaliveEnabled { //如果有keepalive ,则记录一下最后的read时间
 			atomic.StoreInt64(&t.lastRead, time.Now().UnixNano())
@@ -1299,7 +1304,7 @@ func (t *http2Client) reader() {
 				}
 				continue
 			} else {
-				// Transport error.
+				// Transport error. 读到其他错误，比如EOF或者connection reset by peer.关闭这个链接
 				t.Close()
 				return
 			}

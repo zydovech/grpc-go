@@ -21,6 +21,7 @@ package grpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"strconv"
@@ -197,6 +198,7 @@ func newClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 			return nil, toRPCErr(err)
 		}
 	}
+	//send和recv都有一个限制值
 	c.maxSendMessageSize = getMaxSize(mc.MaxReqSize, c.maxSendMessageSize, defaultClientMaxSendMessageSize)
 	c.maxReceiveMessageSize = getMaxSize(mc.MaxRespSize, c.maxReceiveMessageSize, defaultClientMaxReceiveMessageSize)
 	if err := setCallInfoCodec(c); err != nil {
@@ -888,7 +890,8 @@ func (a *csAttempt) recvMsg(m interface{}, payInfo *payloadInfo) (err error) {
 	}
 	err = recv(a.p, cs.codec, a.s, a.dc, m, *cs.callInfo.maxReceiveMessageSize, payInfo, a.decomp)
 	if err != nil {
-		if err == io.EOF {
+		fmt.Println(err)
+		if err == io.EOF {//读到了结束符，当把stream close的时候，也会写io.EOF，然后会被读取到
 			if statusErr := a.s.Status().Err(); statusErr != nil {
 				return statusErr
 			}

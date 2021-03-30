@@ -173,6 +173,7 @@ func defaultCallInfo() *callInfo {
 
 // CallOption configures a Call before it starts or extracts information from
 // a Call after it completes.
+//每次调用的时候，都会进行执行，主要用于设置callInfo的值
 type CallOption interface {
 	// before is called before the call is sent to any server.  If before
 	// returns a non-nil error, the RPC fails with that error.
@@ -506,10 +507,11 @@ type parser struct {
 // that the underlying io.Reader must not return an incompatible
 // error.
 func (p *parser) recvMsg(maxReceiveMessageSize int) (pf payloadFormat, msg []byte, err error) {
+	//读取数据
 	if _, err := p.r.Read(p.header[:]); err != nil {
 		return 0, nil, err
 	}
-
+	//前面5个字节 分别是代表是否压缩，以及长度
 	pf = payloadFormat(p.header[0])
 	length := binary.BigEndian.Uint32(p.header[1:])
 
@@ -779,16 +781,20 @@ func Errorf(c codes.Code, format string, a ...interface{}) error {
 }
 
 // toRPCErr converts an error into an error from the status package.
+//把一个error转换为status package里的错误
 func toRPCErr(err error) error {
 	if err == nil || err == io.EOF {
 		return err
 	}
+	//在读的中间，读到了EOF，是不正常的，内部错误
 	if err == io.ErrUnexpectedEOF {
 		return status.Error(codes.Internal, err.Error())
 	}
+	//是否实现了特定的接口
 	if _, ok := status.FromError(err); ok {
 		return err
 	}
+
 	switch e := err.(type) {
 	case transport.ConnectionError:
 		return status.Error(codes.Unavailable, e.Desc)
@@ -805,13 +811,13 @@ func toRPCErr(err error) error {
 
 // setCallInfoCodec should only be called after CallOptions have been applied.
 func setCallInfoCodec(c *callInfo) error {
-	if c.codec != nil {
+	if c.codec != nil {  //用于序列化的
 		// codec was already set by a CallOption; use it.
 		return nil
 	}
 
 	if c.contentSubtype == "" {
-		// No codec specified in CallOptions; use proto by default.
+		// No codec specified in CallOptions; use proto by default.默认才有的就是proto
 		c.codec = encoding.GetCodec(proto.Name)
 		return nil
 	}
